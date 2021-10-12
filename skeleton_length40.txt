@@ -1,0 +1,1429 @@
+///////
+//
+//
+//20210621
+//////
+
+
+///パラメータ
+//
+//画像の上下左右のいれるスペース(ピクセル数）
+canvas_edge_space=10;
+
+//各線の端部での角度を判定する長さ（ピクセル数）
+edge_angle_length=40;
+
+//各線の端部での角度を判定する時に、計算しない端部の長さ（ピクセル数）
+//例えば、edge_angle_length=20、edge_angle_remove_length=5の時、6番目から20番目の値で角度を計算する。
+edge_angle_remove_length=20;
+
+
+//近傍、遠距離の距離から判定する方法はver2のみまで
+//角度のみで判定させても精度は（あまり）変らない（と思う）
+////
+///前提、boneがあつまりStrandになる
+////角度判定で厳しい時に使う角度
+reference_angle=0.2;
+///角度判定で緩い時に使う角度
+unlimited_reference_angle=1.6;
+
+//各線の結合を判定する近傍部長さ（ピクセル数）普通4で良いと思いきや、特殊事例で7がある。（理論的にはもっと大きくなりうる）
+near_connect_length=10;
+
+//結合を判定する際に、開始点としない長さ。例えば交点部とか。
+non_start_bone_length=100;
+
+//最終的にノイズとして除去する長さ（ピクセル数）
+noise_detect_length=30;
+
+//画面端部で始点終点を除くピクセル数
+remove_edge_length=10;
+
+//画像に埋め込む文字のフォントサイズ(ピクセル)
+font_size=10;
+
+//strand毎の画像を出力するかしないか
+//出力する1,　出力しない0
+
+strand_output=0;
+
+//strand毎の画像について、どの程度のピクセル数の余白を取るか(ピクセル)
+strand_image_margin=100;
+
+////
+
+first_number=1;
+
+setBatchMode("hide");
+
+//////////
+//////////同フォルダ内のファイルを読み込む。
+//////////
+raw_path=File.directory;
+raw_file_list=getFileList(raw_path);
+
+Array.print(raw_file_list);
+
+raw_file_list = Array.deleteValue(raw_file_list, "raw/");
+raw_file_list = Array.deleteValue(raw_file_list, "original/");
+raw_file_list = Array.deleteValue(raw_file_list, "image_after_processing/");
+
+
+Array.print(raw_file_list);
+
+
+raw_file_number=lengthOf(raw_file_list);
+
+File.makeDirectory(raw_path+"image_after_processing");
+
+
+
+//
+//方向ルール
+//	Y-
+//  	512
+// X-	6H3 X+
+//	784
+//	Y+
+// 0はその場
+
+
+////////前処理
+
+//////////
+//////////
+//////関数
+
+//
+//指定座標が黒(255)か白(0)を判定する
+//255なら1,255以外なら0を返す
+//
+//
+function existence_decision(x_coordinate,y_coordinate,direction){
+
+existence_result=0;
+
+	if(direction==0){
+		if(getPixel(x_coordinate+canvas_edge_space, y_coordinate+canvas_edge_space)==255){
+		existence_result=1;
+		}
+	}
+
+	if(direction==1){
+		if(getPixel(x_coordinate+canvas_edge_space, y_coordinate+canvas_edge_space-1)==255){
+		existence_result=1;
+		}
+	}
+
+	if(direction==2){
+		if(getPixel(x_coordinate+canvas_edge_space+1, y_coordinate+canvas_edge_space-1)==255){
+		existence_result=1;
+		}
+	}
+
+	if(direction==3){
+		if(getPixel(x_coordinate+canvas_edge_space+1, y_coordinate+canvas_edge_space)==255){
+		existence_result=1;
+		}
+	}
+
+	if(direction==4){
+		if(getPixel(x_coordinate+canvas_edge_space+1, y_coordinate+canvas_edge_space+1)==255){
+		existence_result=1;
+		}
+	}
+
+	if(direction==5){
+		if(getPixel(x_coordinate+canvas_edge_space-1, y_coordinate+canvas_edge_space-1)==255){
+		existence_result=1;
+		}
+	}
+
+	if(direction==6){
+		if(getPixel(x_coordinate+canvas_edge_space-1, y_coordinate+canvas_edge_space)==255){
+		existence_result=1;
+		}
+	}
+
+	if(direction==7){
+		if(getPixel(x_coordinate+canvas_edge_space-1, y_coordinate+canvas_edge_space+1)==255){
+		existence_result=1;
+		}
+	}
+
+	if(direction==8){
+		if(getPixel(x_coordinate+canvas_edge_space, y_coordinate+canvas_edge_space+1)==255){
+		existence_result=1;
+		}
+	}
+
+
+return existence_result;
+}
+
+
+function surroundings_number(x_coordinate,y_coordinate){
+surroundings_result=0;
+	for(i=1;i<=8;i++){
+		surroundings_result=surroundings_result+existence_decision(x_coordinate, y_coordinate,i);
+	}
+return surroundings_result;	
+}
+
+
+function one_direction_number(x_coordinate,y_coordinate){
+direction_result=0;
+	for(i=1;i<=8;i++){
+		if(existence_decision(x_coordinate, y_coordinate,i)==1){
+		direction_result=i;
+		}
+	}
+return direction_result;	
+}
+
+function next_direction_number(x_coordinate,y_coordinate,former_direction){
+direction_result=0;
+	for(i=1;i<=8;i++){
+		if(existence_decision(x_coordinate, y_coordinate,i)==1){
+			if(i!=(9-former_direction)){
+			direction_result=i;
+			}
+		}
+	}
+//次の方向がないと0を返す
+return direction_result;	
+}
+
+
+function direction_x_modifier(direction){
+	modifier=0;
+	if(direction==2||direction==3||direction==4){
+		modifier=1;
+	}
+
+	if(direction==5||direction==6||direction==7){
+		modifier=-1;
+	}
+return modifier;	
+}
+
+
+function direction_y_modifier(direction){
+	modifier=0;
+	if(direction==4||direction==8||direction==7){
+		modifier=1;
+	}
+
+	if(direction==1||direction==2||direction==5){
+		modifier=-1;
+	}
+return modifier;	
+}
+
+function length_modifier(direction){
+	modifier=0;
+	if(direction==1||direction==3||direction==6||direction==8){
+		modifier=1;
+	}
+
+	if(direction==2||direction==4||direction==5||direction==7){
+		modifier=1.414;
+	}
+
+
+return modifier;	
+}
+
+
+function compare_angle_correction(angle){
+
+			
+	if(angle>3.14){
+		angle=6.28-angle;
+	}
+
+//ダミー数字処理
+	if(angle<-50){
+		angle=100;
+	}
+
+return angle;
+
+}
+
+function end_angle_correction(angle){
+							if(angle>=1.57){
+								angle=angle-3.14;
+							}else{
+								angle=angle+3.14;
+							}
+return angle;
+}
+
+function decide_color(color_n){
+	if(color_n%4==0){
+	color="red";
+	}
+
+	if(color_n%4==1){
+	color="blue";
+	}
+
+	if(color_n%4==2){
+	color="green";
+	}
+
+	if(color_n%4==3){
+	color="orange";
+	}
+
+return color;
+}
+
+function draw_string_confirm_image(string,x,y,color_n){
+	setFont("SanSerif", font_size, "antialiased");
+	color_name=decide_color(color_n);
+  	setColor(color_name);
+	drawString(string, x+canvas_edge_space, y+canvas_edge_space);
+return;
+}
+
+function draw_bone_name_confirm_image(string,x,y){
+	setFont("SanSerif", font_size, "antialiased");
+  	setColor("black");
+	drawString(string, x+canvas_edge_space, y+canvas_edge_space);
+return;
+}
+
+
+function decide_draw_flag(x,y,color_n){
+flag=0;
+	x=round(x);
+	y=round(y);
+
+	if(color_n%4==0){
+//	color="red";
+		if((x+y)%2==0){
+			flag=1;
+		}
+	}
+
+	if(color_n%4==1){
+//	color="blue";
+		if((x+y)%2==1){
+			flag=1;
+		}
+	}
+
+	if(color_n%4==2){
+//	color="green";
+		if((x+y)%4==0||(x+y)%4==1){
+			flag=1;
+		}
+	}
+
+	if(color_n%4==3){
+//	color="orange";
+		if((x+y)%4==2||(x+y)%4==3){
+			flag=1;
+		}
+	}
+
+//drawする場合は1を返す
+return flag;
+}
+
+function draw_point_confirm_image(x,y,color_n){
+	write_flag=decide_draw_flag(x,y,color_n);
+	if(write_flag==1){
+	color_name=decide_color(color_n);
+  	setColor(color_name);
+  	drawLine(x+canvas_edge_space,y+canvas_edge_space,x+canvas_edge_space,y+canvas_edge_space);
+  	}
+return;
+}
+
+
+function draw_line_confirm_image(x,y,color_n){
+	color_name=decide_color(color_n);
+  	setColor(color_name);
+  	drawLine(x+canvas_edge_space,y+canvas_edge_space,x+canvas_edge_space,y+canvas_edge_space);
+return;
+}
+
+
+///以下繰り返し
+///各ファイル毎に行う
+for(file_open_i=0;file_open_i<raw_file_number;file_open_i++){
+	open(raw_path+raw_file_list[file_open_i]);
+//	print(raw_path+raw_file_list[file_open_i]);
+
+//	このfile_open_iのファイル名を決める
+	file_name=File.getNameWithoutExtension(raw_path+raw_file_list[file_open_i]);
+
+
+	print("解析開始");
+//都合上、上下左右に白スペースをいれる。
+
+
+//結果ファイルの作成
+
+//start点を記録したファイル
+file=File.open(raw_path+"image_after_processing\\"+file_name+"_result_start.txt");
+File.close(file);
+
+//交点を記録したファイル
+file=File.open(raw_path+"image_after_processing\\"+file_name+"_result_intersection_point.txt");
+File.close(file);
+
+//各boneのコース座標
+file=File.open(raw_path+"image_after_processing\\"+file_name+"_result_bone_course.txt");
+File.close(file);
+
+//各boneの詳細
+file=File.open(raw_path+"image_after_processing\\"+file_name+"_result_bone_detail.txt");
+File.close(file);
+
+//各Strandの詳細
+file=File.open(raw_path+"image_after_processing\\"+file_name+"_result_strand_detail.txt");
+File.close(file);
+
+file=File.open(raw_path+"image_after_processing\\"+file_name+"_result_final_box.txt");
+File.close(file);
+
+
+print("Canvasサイズ変更");
+
+	raw_image_height = getHeight();
+	raw_image_width = getWidth();
+
+	image_height=raw_image_height+canvas_edge_space*2;
+	
+	image_width=raw_image_width+canvas_edge_space*2;
+
+	run("Canvas Size...", "width=image_width height=image_height position=Center zero");
+
+	print("交点探索開始");
+
+//交点を記録する
+	intersection_point_x_array=newArray();
+	intersection_point_y_array=newArray();
+
+	for(search_y=1;search_y<=raw_image_height;search_y++){
+		for(search_x=1;search_x<=raw_image_width;search_x++){
+			if(existence_decision(search_x,search_y,0)==1){
+				if(surroundings_number(search_x,search_y)>=3){
+				intersection_point_x_array=Array.concat(intersection_point_x_array,search_x);
+				intersection_point_y_array=Array.concat(intersection_point_y_array,search_y);
+				}
+			}
+		}
+	}
+	
+//交点を消す
+	for(delete_x=0;delete_x<intersection_point_x_array.length;delete_x++){
+		delete_y=delete_x;
+				setPixel(intersection_point_x_array[delete_x]+canvas_edge_space,intersection_point_y_array[delete_y]+canvas_edge_space, 0);
+
+				setPixel(intersection_point_x_array[delete_x]+canvas_edge_space,intersection_point_y_array[delete_y]+canvas_edge_space-1, 0);
+				setPixel(intersection_point_x_array[delete_x]+canvas_edge_space,intersection_point_y_array[delete_y]+canvas_edge_space+1, 0);
+
+
+				setPixel(intersection_point_x_array[delete_x]+canvas_edge_space-1,intersection_point_y_array[delete_y]+canvas_edge_space-1, 0);
+				setPixel(intersection_point_x_array[delete_x]+canvas_edge_space-1,intersection_point_y_array[delete_y]+canvas_edge_space, 0);
+				setPixel(intersection_point_x_array[delete_x]+canvas_edge_space-1,intersection_point_y_array[delete_y]+canvas_edge_space+1, 0);
+
+				setPixel(intersection_point_x_array[delete_x]+canvas_edge_space+1,intersection_point_y_array[delete_y]+canvas_edge_space-1, 0);
+				setPixel(intersection_point_x_array[delete_x]+canvas_edge_space+1,intersection_point_y_array[delete_y]+canvas_edge_space, 0);
+				setPixel(intersection_point_x_array[delete_x]+canvas_edge_space+1,intersection_point_y_array[delete_y]+canvas_edge_space+1, 0);
+	}
+
+
+
+	print("交点消し終了");
+
+//交点を保存する
+	File.append("Intersection X, Interseciton Y", raw_path+"image_after_processing\\"+file_name+"_result_intersection_point.txt") 
+	for(start_i=0;start_i<intersection_point_x_array.length;start_i++){
+		File.append(intersection_point_x_array[start_i]+","+intersection_point_y_array[start_i] , raw_path+"image_after_processing\\"+file_name+"_result_intersection_point.txt") ;
+	}
+	
+	
+	
+//データ配列の宣言
+
+	start_x_array=newArray();
+	start_y_array=newArray();
+	end_x_array=newArray();
+	end_y_array=newArray();
+	max_x_array=newArray();
+	max_y_array=newArray();
+	min_x_array=newArray();
+	min_y_array=newArray();	
+	length_array=newArray();
+	start_angle_array=newArray();
+	end_angle_array=newArray();
+
+//スタート地点を探す
+
+//result_startファイルにタブをつける
+	File.append("Start X, Start Y", raw_path+"image_after_processing\\"+file_name+"_result_start.txt") 
+
+	for(search_y=0;search_y<=raw_image_height;search_y++){
+		for(search_x=0;search_x<=raw_image_width;search_x++){
+			if(existence_decision(search_x,search_y,0)==1){
+				if(surroundings_number(search_x,search_y)==1){
+//ここに来ているのがスタート地点と判定された場所。周囲に1あればスタート地点と判定。
+//もし1点だけならば判定されない。
+//スタート地点のx,yの次確認する
+				start_x_array=Array.concat(start_x_array,search_x);
+				start_y_array=Array.concat(start_y_array,search_y);
+
+//				Array.print(start_x_array);
+//				Array.print(start_y_array);
+
+				File.append(search_x+","+search_y, raw_path+"image_after_processing\\"+file_name+"_result_start.txt") ;
+
+				}
+			}
+		}
+	}
+
+	
+	
+	print("スタート地点探索開始");
+
+
+//ここからスタート地点から一つ一つ探していく
+
+	start_point_quantity=lengthOf(start_x_array);
+
+	for(start_i=0;start_i<start_point_quantity;start_i++){
+				
+//		print(start_x_array[start_i]);
+//		print(start_y_array[start_i]);
+
+		course_x_array=newArray();
+		course_y_array=newArray();
+
+		course_x_array=Array.concat(course_x_array,start_x_array[start_i]);
+		course_y_array=Array.concat(course_y_array,start_y_array[start_i]);
+
+//ここから1めの処理を行う
+
+		next_direction=one_direction_number(start_x_array[start_i],start_y_array[start_i]);
+
+		next_x=start_x_array[start_i]+direction_x_modifier(next_direction);
+		next_y=start_y_array[start_i]+direction_y_modifier(next_direction);
+
+		course_x_array=Array.concat(course_x_array,next_x);
+		course_y_array=Array.concat(course_y_array,next_y);
+		course_length=length_modifier(next_direction);
+
+
+		for(stop=0;stop<2;stop){
+			
+			next_direction=next_direction_number(next_x,next_y,next_direction);
+				if(next_direction==0){
+//ここはEndだったときの処理
+				stop=2;
+				end_x_array=Array.concat(end_x_array,next_x);
+				end_y_array=Array.concat(end_y_array,next_y);
+				length_array=Array.concat(length_array,course_length);
+				Array.getStatistics(course_x_array, min_x, max_x, mean_x, std_x);
+				Array.getStatistics(course_y_array, min_y, max_y, mean_y, std_y);
+				max_x_array=Array.concat(max_x_array,max_x);
+				max_y_array=Array.concat(max_y_array,max_y);
+				min_x_array=Array.concat(min_x_array,min_x);
+				min_y_array=Array.concat(min_y_array,min_y);
+				
+//終わり
+				}else{
+				next_x=next_x+direction_x_modifier(next_direction);
+				next_y=next_y+direction_y_modifier(next_direction);
+				course_x_array=Array.concat(course_x_array,next_x);
+				course_y_array=Array.concat(course_y_array,next_y);
+				course_length=course_length+length_modifier(next_direction);
+				}		
+
+		}
+
+
+
+
+		
+//angleを計算する
+//atan(n)Calculates the inverse tangent (arctangent) of n. Returns a value in the range -PI/2 through PI/2.
+//そのため、
+//長さがlength以下だった場合の角度
+		if(course_x_array.length<edge_angle_length){
+		start_angle =Math.atan((course_y_array[course_y_array.length-1]-course_y_array[0])/(course_x_array[course_x_array.length-1]-course_x_array[0]));
+			if((course_x_array[course_x_array.length-1]-course_x_array[0])<0){
+			start_angle=start_angle+3.14;
+			}
+		start_angle_array=Array.concat(start_angle_array,start_angle);
+		end_angle =Math.atan((course_y_array[course_y_array.length-1]-course_y_array[0])/(course_x_array[course_x_array.length-1]-course_x_array[0]));
+
+			if((course_x_array[course_x_array.length-1]-course_x_array[0])<0){
+			end_angle=end_angle+3.14;
+			}
+		end_angle_array=Array.concat(end_angle_array,end_angle);
+
+
+
+
+
+		}else{
+//Start angle
+
+		start_angle =Math.atan((course_y_array[edge_angle_length-1]-course_y_array[edge_angle_remove_length-1])/(course_x_array[edge_angle_length-1]-course_x_array[edge_angle_remove_length-1]));
+			if((course_x_array[edge_angle_length-1]-course_x_array[edge_angle_remove_length-1])<0){
+			start_angle=start_angle+3.14;
+			}
+		start_angle_array=Array.concat(start_angle_array,start_angle);
+//End angle
+		end_angle =Math.atan((course_y_array[course_y_array.length-1-edge_angle_remove_length+1]-course_y_array[course_y_array.length-1-edge_angle_length+1])/(course_x_array[course_y_array.length-1-edge_angle_remove_length+1]-course_x_array[course_y_array.length-1-edge_angle_length+1]));
+			if((course_x_array[course_y_array.length-1-edge_angle_remove_length+1]-course_x_array[course_y_array.length-1-edge_angle_length+1])<0){
+			end_angle=end_angle+3.14;
+			}
+		end_angle_array=Array.concat(end_angle_array,end_angle);
+		}
+
+//角度は±逆になるので注意（y座標+が下のため）
+
+
+		File.append(String.join(course_x_array), raw_path+"image_after_processing\\"+file_name+"_result_bone_course.txt") ;
+		File.append(String.join(course_y_array), raw_path+"image_after_processing\\"+file_name+"_result_bone_course.txt") ;
+	print("座標データ取得 番号");
+	print(start_i);
+	}
+
+	print("各試料の座標データ取得終了");
+
+//
+
+
+//ここから被っている線を減らす
+//はじめに被っているものをフラグ着ける	
+	overlap_flag=newArray(start_x_array.length);
+
+
+	for(i=0;i<start_x_array.length;i++){
+		for(j=i+1;j<end_x_array.length;j++){
+			if(start_x_array[i]==end_x_array[j]){
+				if(start_y_array[i]==end_y_array[j]){
+				overlap_flag[j]=1;
+				}
+			}
+		}
+	print("各試料の重複データ取得 番号");
+	print(i);
+	}
+
+	print("各試料の重複確認終了");
+
+	
+	bone_log_array=newArray();
+
+//bone_log_arrayに各bone番号（つまり順番の値）をいれる
+	
+//各boneデータの保存と同時にbone_log_arrayに各bone番号をいれる
+
+	File.append("No, Start X, Start Y, End X, End Y, Max X, Min X, Max Y, Min Y, Start Angle, End Angle, Length,overlap", raw_path+"image_after_processing\\"+file_name+"_result_bone_detail.txt") 
+	for(start_i=0;start_i<start_point_quantity;start_i++){
+		bone_log_array=Array.concat(bone_log_array,start_i);
+		File.append(bone_log_array[start_i]+","+start_x_array[start_i]+","+start_y_array[start_i]+","+end_x_array[start_i]+","+end_y_array[start_i]+","+max_x_array[start_i]+","+min_x_array[start_i]+","+max_y_array[start_i]+","+min_y_array[start_i]+","+start_angle_array[start_i]+","+end_angle_array[start_i]+","+length_array[start_i]+","+overlap_flag[start_i]  , raw_path+"image_after_processing\\"+file_name+"_result_bone_detail.txt") ;
+	}
+
+//この後、length arrayは加算される。各boneの長さを保管しておく
+bone_length_array=Array.copy(length_array);
+bone_overlap_flag=Array.copy(overlap_flag);
+
+////ここから各線の結合を行う
+	print("各試料の結合開始(1回目)");
+
+//condition_flag arrayをつくる
+	condition_flag=Array.copy(overlap_flag);
+
+
+//condition_flag;
+//0:未判定
+//1:overlapしている、判定に使用せず（二重に数えているため） overlap_flagから引き継いでいる
+//2:一度経路として通った。今後も途中の経路として使用するが、ここから開始することは無い。 
+//3:判定終了。データとして採用する。途中の経路として使用するが、ここから開始することは無い。
+//4:3だったが、画面端部のため採用せず
+//5:3or2or0だったが、今回の判定で一度経路として通ったor経路として判定対象になった。終了後2になる。
+//6::3だったが、短いため（noise_detect_length以下のため）採用せず
+//7:結合を判定するときに開始点としない長さ non_start_bone_lengthで判定される。例えば交点とか。昔は2の判定がされていた。今回の判定で一度経路として通ったor経路として判定対象になった後は8となる。
+//　最終的に、 non_start_bone_length以下で一度も判定されなかったものとなる。
+//8:7だったが、今回の判定で一度経路として通ったor経路として判定対象になった。終了後9になる。
+//9: non_start_bone_lengthで判定される。全体を通して、一度経路となり通ったor経路として判定対象となった。7→8←→9　
+
+//condition2の結合を判定するときに開始点としない長さ non_start_bone_lengthを判定する。判定値は7。
+
+	for(i=0;i<start_x_array.length;i++){
+		if((length_array[i] <= non_start_bone_length) && (condition_flag[i]!=1)){
+		condition_flag[i]=7;
+		}
+	}
+	
+
+	for(decision_path=0;decision_path<=1;decision_path++){
+
+	if(decision_path==1){
+	
+	print("経路判定(2回目)");
+		//2回目の判定において、7だったものを全部0にする。
+
+	for(i=0;i<start_x_array.length;i++){
+		if(condition_flag[i]==7){
+		condition_flag[i]=0;
+		}
+	}
+	
+	}
+	
+	
+	strand_selection_i=0;
+	while(strand_selection_i<start_x_array.length){
+		print("経路判定bone番号");
+		print(strand_selection_i);
+		
+		if(decision_path==0){
+//bone記録用の行列を作る（毎strand毎にrefreshする）	
+		bone_log=strand_selection_i;
+		}else{
+		bone_log=bone_log_array[strand_selection_i];
+		}
+
+
+//始めに結合する可能性がある相手を6点探す	
+		if(condition_flag[strand_selection_i]==0){
+			j1=-1;
+			j2=-1;
+			j3=-1;
+			j4=-1;
+			j5=-1;
+			j6=-1;
+			j7=-1;
+			j8=-1;
+			j1_angle=100;
+			j2_angle=100;
+			j3_angle=100;	
+			j4_angle=100;
+			j5_angle=100;
+			j6_angle=100;
+
+			for(j=0;j<start_x_array.length;j++){
+			//Startと繋がるかどうかを確認
+				if((Math.abs(start_x_array[j]-end_x_array[strand_selection_i])<=near_connect_length) && (Math.abs(start_y_array[j]-end_y_array[strand_selection_i])<=near_connect_length) && strand_selection_i!=j && overlap_flag[j]!=1 && condition_flag[j]!=5 && condition_flag[j]!=6 && condition_flag[j]!=8){
+					intersection_length=Math.sqrt(Math.sqr(start_x_array[j]-end_x_array[strand_selection_i])+Math.sqr(start_y_array[j]-end_y_array[strand_selection_i]));
+					if(j1==-1){
+						j1=j;
+						j1_x=end_x_array[j];
+						j1_y=end_y_array[j];
+						j1_max_x=max_x_array[j];
+						j1_min_x=min_x_array[j];
+						j1_max_y=max_y_array[j];
+						j1_min_y=min_y_array[j];
+						//ここで、angleのみは繋がっているところと比較するので、start
+						j1_angle=start_angle_array[j];
+						j1_replacement_angle=end_angle_array[j];
+//						j1_replacement_angle=end_angle_correction(j1_replacement_angle);
+						j1_length=length_array[j]+intersection_length;
+
+					}else if(j2==-1){
+						j2=j;
+						j2_x=end_x_array[j];
+						j2_y=end_y_array[j];
+						j2_max_x=max_x_array[j];
+						j2_min_x=min_x_array[j];
+						j2_max_y=max_y_array[j];
+						j2_min_y=min_y_array[j];
+//ここで、angleのみは繋がっているところと比較するので、start
+						j2_angle=start_angle_array[j];
+						j2_replacement_angle=end_angle_array[j];
+//						j2_replacement_angle=end_angle_correction(j2_replacement_angle);
+						j2_length=length_array[j]+intersection_length;
+
+					}else if(j3==-1){
+						j3=j;
+						j3_x=end_x_array[j];
+						j3_y=end_y_array[j];
+						j3_max_x=max_x_array[j];
+						j3_min_x=min_x_array[j];
+						j3_max_y=max_y_array[j];
+						j3_min_y=min_y_array[j];
+//ここで、angleのみは繋がっているところと比較するので、start
+						j3_angle=start_angle_array[j];
+						j3_replacement_angle=end_angle_array[j];
+//						j3_replacement_angle=end_angle_correction(j3_replacement_angle);
+						j3_length=length_array[j]+intersection_length;
+
+					}else if(j4==-1){
+						j4=j;
+						j4_x=end_x_array[j];
+						j4_y=end_y_array[j];
+						j4_max_x=max_x_array[j];
+						j4_min_x=min_x_array[j];
+						j4_max_y=max_y_array[j];
+						j4_min_y=min_y_array[j];
+//ここで、angleのみは繋がっているところと比較するので、start
+						j4_angle=start_angle_array[j];
+						j4_replacement_angle=end_angle_array[j];
+//						j4_replacement_angle=end_angle_correction(j4_replacement_angle);
+						j4_length=length_array[j]+intersection_length;
+
+					}else if(j5==-1){
+						j5=j;
+						j5_x=end_x_array[j];
+						j5_y=end_y_array[j];
+						j5_max_x=max_x_array[j];
+						j5_min_x=min_x_array[j];
+						j5_max_y=max_y_array[j];
+						j5_min_y=min_y_array[j];
+//ここで、angleのみは繋がっているところと比較するので、start
+						j5_angle=start_angle_array[j];
+						j5_replacement_angle=end_angle_array[j];
+//						j5_replacement_angle=end_angle_correction(j5_replacement_angle);
+						j5_length=length_array[j]+intersection_length;
+
+					}else{
+						j6=j;
+						j6_x=end_x_array[j];
+						j6_y=end_y_array[j];
+						j6_max_x=max_x_array[j];
+						j6_min_x=min_x_array[j];
+						j6_max_y=max_y_array[j];
+						j6_min_y=min_y_array[j];
+//ここで、angleのみは繋がっているところと比較するので、start
+						j6_angle=start_angle_array[j];
+						j6_replacement_angle=end_angle_array[j];
+//						j6_replacement_angle=end_angle_correction(j6_replacement_angle);
+						j6_length=length_array[j]+intersection_length;
+
+					}
+				print("Start側と結合の可能性");
+				}
+
+				if((Math.abs(end_x_array[j]-end_x_array[strand_selection_i])<=near_connect_length) && (Math.abs(end_y_array[j]-end_y_array[strand_selection_i])<=near_connect_length) && strand_selection_i!=j && overlap_flag[j]!=1 && condition_flag[j]!=5 && condition_flag[j]!=6 && condition_flag[j]!=8){
+					intersection_length=Math.sqrt(Math.sqr(end_x_array[j]-end_x_array[strand_selection_i])+Math.sqr(end_y_array[j]-end_y_array[strand_selection_i]));
+					if(j1==-1){
+						j1=j;
+						j1_x=start_x_array[j];
+						j1_y=start_y_array[j];
+						j1_max_x=max_x_array[j];
+						j1_min_x=min_x_array[j];
+						j1_max_y=max_y_array[j];
+						j1_min_y=min_y_array[j];
+						j1_angle=end_angle_array[j];
+						j1_angle=end_angle_correction(j1_angle);
+						j1_replacement_angle=start_angle_array[j];
+						j1_length=length_array[j]+intersection_length;
+					}else if(j2==-1){
+						j2=j;
+						j2_x=start_x_array[j];
+						j2_y=start_y_array[j];
+						j2_max_x=max_x_array[j];
+						j2_min_x=min_x_array[j];
+						j2_max_y=max_y_array[j];
+						j2_min_y=min_y_array[j];
+						j2_angle=end_angle_array[j];
+						j2_angle=end_angle_correction(j2_angle);
+						j2_replacement_angle=start_angle_array[j];
+						j2_length=length_array[j]+intersection_length;
+					}else if(j3==-1){
+						j3=j;
+						j3_x=start_x_array[j];
+						j3_y=start_y_array[j];
+						j3_max_x=max_x_array[j];
+						j3_min_x=min_x_array[j];
+						j3_max_y=max_y_array[j];
+						j3_min_y=min_y_array[j];
+						j3_angle=end_angle_array[j];
+						j3_angle=end_angle_correction(j3_angle);
+						j3_replacement_angle=start_angle_array[j];
+						j3_length=length_array[j]+intersection_length;
+					}else if(j4==-1){
+						j4=j;
+						j4_x=start_x_array[j];
+						j4_y=start_y_array[j];
+						j4_max_x=max_x_array[j];
+						j4_min_x=min_x_array[j];
+						j4_max_y=max_y_array[j];
+						j4_min_y=min_y_array[j];
+						j4_angle=end_angle_array[j];
+						j4_angle=end_angle_correction(j4_angle);
+						j4_replacement_angle=start_angle_array[j];
+						j4_length=length_array[j]+intersection_length;
+					}else if(j5==-1){
+						j5=j;
+						j5_x=start_x_array[j];
+						j5_y=start_y_array[j];
+						j5_max_x=max_x_array[j];
+						j5_min_x=min_x_array[j];
+						j5_max_y=max_y_array[j];
+						j5_min_y=min_y_array[j];
+						j5_angle=end_angle_array[j];
+						j5_angle=end_angle_correction(j5_angle);
+						j5_replacement_angle=start_angle_array[j];
+						j5_length=length_array[j]+intersection_length;
+					}else{
+						j6=j;
+						j6_x=start_x_array[j];
+						j6_y=start_y_array[j];
+						j6_max_x=max_x_array[j];
+						j6_min_x=min_x_array[j];
+						j6_max_y=max_y_array[j];
+						j6_min_y=min_y_array[j];
+						j6_angle=end_angle_array[j];
+						j6_angle=end_angle_correction(j6_angle);
+						j6_replacement_angle=start_angle_array[j];
+						j6_length=length_array[j]+intersection_length;
+					}
+				print("End側と結合の可能性");
+				}
+			}
+//もしこの段階でj2=-1ならば、あるいは差分角度が大きければ接続が1以下なので、自動で判定3,iは次のステップに進む
+
+			print("j1~j6bone番号");
+			print(j1);
+			print(j2);
+			print(j3);
+			print(j4);
+			print(j5);
+			print(j6);
+
+
+			j1_compare_angle=Math.abs(j1_angle-end_angle_array[strand_selection_i]);
+			j2_compare_angle=Math.abs(j2_angle-end_angle_array[strand_selection_i]);
+			j3_compare_angle=Math.abs(j3_angle-end_angle_array[strand_selection_i]);
+			j4_compare_angle=Math.abs(j4_angle-end_angle_array[strand_selection_i]);
+			j5_compare_angle=Math.abs(j5_angle-end_angle_array[strand_selection_i]);
+			j6_compare_angle=Math.abs(j6_angle-end_angle_array[strand_selection_i]);
+				
+			j1_compare_angle=compare_angle_correction(j1_compare_angle);
+			j2_compare_angle=compare_angle_correction(j2_compare_angle);
+			j3_compare_angle=compare_angle_correction(j3_compare_angle);
+			j4_compare_angle=compare_angle_correction(j4_compare_angle);
+			j5_compare_angle=compare_angle_correction(j5_compare_angle);
+			j6_compare_angle=compare_angle_correction(j6_compare_angle);
+
+			print("比較角度");
+			print(j1_compare_angle);
+			print(j2_compare_angle);
+			print(j3_compare_angle);
+			print(j4_compare_angle);
+			print(j5_compare_angle);
+			print(j6_compare_angle);
+
+			j1_connection_compare_angle=j1_compare_angle;
+			j2_connection_compare_angle=j2_compare_angle;
+			j3_connection_compare_angle=j3_compare_angle;
+			j4_connection_compare_angle=j4_compare_angle;
+			j5_connection_compare_angle=j5_compare_angle;
+			j6_connection_compare_angle=j6_compare_angle;
+			
+			if(j1!=-1){
+			if(condition_flag[j1]==7 || condition_flag[j1]==9){
+			j1_connection_compare_angle=j1_compare_angle-(unlimited_reference_angle-reference_angle);
+				if(j1_connection_compare_angle<0){
+				j1_connection_compare_angle=0;
+				}
+			}}
+			if(j2!=-1){
+			if(condition_flag[j2]==7 || condition_flag[j2]==9){
+			j2_connection_compare_angle=j2_compare_angle-(unlimited_reference_angle-reference_angle);
+				if(j2_connection_compare_angle<0){
+				j2_connection_compare_angle=0;
+				}
+			}}
+			if(j3!=-1){
+			if(condition_flag[j3]==7 || condition_flag[j3]==9){
+			j3_connection_compare_angle=j3_compare_angle-(unlimited_reference_angle-reference_angle);
+				if(j3_connection_compare_angle<0){
+				j3_connection_compare_angle=0;
+				}
+			}}
+			if(j4!=-1){
+			if(condition_flag[j4]==7 || condition_flag[j4]==9){
+			j4_connection_compare_angle=j4_compare_angle-(unlimited_reference_angle-reference_angle);
+				if(j4_connection_compare_angle<0){
+				j4_connection_compare_angle=0;
+				}
+			}}
+			if(j5!=-1){
+			if(condition_flag[j5]==7 || condition_flag[j5]==9){
+			j5_connection_compare_angle=j5_compare_angle-(unlimited_reference_angle-reference_angle);
+				if(j5_connection_compare_angle<0){
+				j5_connection_compare_angle=0;
+				}
+			}}
+			if(j6!=-1){
+			if(condition_flag[j6]==7 || condition_flag[j6]==9){
+			j6_connection_compare_angle=j6_compare_angle-(unlimited_reference_angle-reference_angle);
+				if(j6_connection_compare_angle<0){
+				j6_connection_compare_angle=0;
+				}
+			}}		
+			
+			
+			print("交点等補正比較角度");
+			print(j1_connection_compare_angle);
+			print(j2_connection_compare_angle);
+			print(j3_connection_compare_angle);
+			print(j4_connection_compare_angle);
+			print(j5_connection_compare_angle);
+			print(j6_connection_compare_angle);
+
+
+
+
+			if(j1==-1){
+				condition_flag[strand_selection_i]=3;
+				strand_selection_i=strand_selection_i+1;
+				print("接続数0以下のため次のstrand_selection_iに進む");
+
+
+//condition_flagのk5を2にする
+				for(k=0;k<start_x_array.length;k++){
+			 		if(condition_flag[k]==5){
+					condition_flag[k]=2;
+					}
+				}
+				
+//condition_flagのk8を9にする
+				for(k=0;k<start_x_array.length;k++){
+			 		if(condition_flag[k]==8){
+					condition_flag[k]=9;
+					}
+				}	
+
+
+			}else if(Math.min(j1_connection_compare_angle,Math.min(j2_connection_compare_angle,Math.min(j3_connection_compare_angle,Math.min(j4_connection_compare_angle,Math.min(j5_connection_compare_angle,j6_connection_compare_angle)))))>=reference_angle){
+				condition_flag[strand_selection_i]=3;
+				strand_selection_i=strand_selection_i+1;
+				print("角度基準以上のため次のstrand_selection_iに進む");
+
+//condition_flagのk5を2にする
+				for(k=0;k<start_x_array.length;k++){
+			 		if(condition_flag[k]==5){
+					condition_flag[k]=2;
+					}
+				}
+//condition_flagのk8を9にする
+				for(k=0;k<start_x_array.length;k++){
+			 		if(condition_flag[k]==8){
+					condition_flag[k]=9;
+					}
+				}		
+				
+				
+			}else{
+//接続数が1以上の時
+
+
+			
+
+
+				if(j1_compare_angle==Math.min(j1_compare_angle,Math.min(j2_compare_angle,Math.min(j3_compare_angle,Math.min(j4_compare_angle,Math.min(j5_compare_angle,j6_compare_angle)))))){
+					if(condition_flag[j1]==7 ||condition_flag[j1]==9){
+						condition_flag[j1]=8;
+					}else{
+						condition_flag[j1]=5;
+					}
+					
+					end_x_array[strand_selection_i]=j1_x;
+					end_y_array[strand_selection_i]=j1_y;
+					max_x_array[strand_selection_i]=Math.max(max_x_array[strand_selection_i], j1_max_x);
+					min_x_array[strand_selection_i]=Math.min(min_x_array[strand_selection_i], j1_min_x);
+					max_y_array[strand_selection_i]=Math.max(max_y_array[strand_selection_i], j1_max_y);
+					min_y_array[strand_selection_i]=Math.min(min_y_array[strand_selection_i], j1_min_y);
+					length_array[strand_selection_i]=length_array[strand_selection_i]+j1_length;
+					
+					if(condition_flag[j1]==5){
+						end_angle_array[strand_selection_i]=j1_replacement_angle;
+					}
+					
+					bone_log_array[strand_selection_i]=toString(bone_log_array[strand_selection_i])+","+j1;
+			print("j1と結合");
+	
+				}else if(j2_compare_angle==Math.min(j1_compare_angle,Math.min(j2_compare_angle,Math.min(j3_compare_angle,Math.min(j4_compare_angle,Math.min(j5_compare_angle,j6_compare_angle)))))){
+					if(condition_flag[j2]==7 ||condition_flag[j2]==9){
+					condition_flag[j2]=8;
+					}else{
+					condition_flag[j2]=5;
+					}
+					end_x_array[strand_selection_i]=j2_x;
+					end_y_array[strand_selection_i]=j2_y;
+					max_x_array[strand_selection_i]=Math.max(max_x_array[strand_selection_i], j2_max_x);
+					min_x_array[strand_selection_i]=Math.min(min_x_array[strand_selection_i], j2_min_x);
+					max_y_array[strand_selection_i]=Math.max(max_y_array[strand_selection_i], j2_max_y);
+					min_y_array[strand_selection_i]=Math.min(min_y_array[strand_selection_i], j2_min_y);
+					length_array[strand_selection_i]=length_array[strand_selection_i]+j2_length;
+					
+					if(condition_flag[j2]==5){
+						end_angle_array[strand_selection_i]=j2_replacement_angle;
+					}
+					
+					bone_log_array[strand_selection_i]=toString(bone_log_array[strand_selection_i])+","+j2;
+					
+			print("j2と結合");
+
+				}else if(j3_compare_angle==Math.min(j1_compare_angle,Math.min(j2_compare_angle,Math.min(j3_compare_angle,Math.min(j4_compare_angle,Math.min(j5_compare_angle,j6_compare_angle)))))){
+					if(condition_flag[j3]==7 ||condition_flag[j3]==9){
+					condition_flag[j3]=8;
+					}else{
+					condition_flag[j3]=5;
+					}
+					end_x_array[strand_selection_i]=j3_x;
+					end_y_array[strand_selection_i]=j3_y;
+					max_x_array[strand_selection_i]=Math.max(max_x_array[strand_selection_i], j3_max_x);
+					min_x_array[strand_selection_i]=Math.min(min_x_array[strand_selection_i], j3_min_x);
+					max_y_array[strand_selection_i]=Math.max(max_y_array[strand_selection_i], j3_max_y);
+					min_y_array[strand_selection_i]=Math.min(min_y_array[strand_selection_i], j3_min_y);
+					length_array[strand_selection_i]=length_array[strand_selection_i]+j3_length;
+					if(condition_flag[j3]==5){
+						end_angle_array[strand_selection_i]=j3_replacement_angle;
+					}
+					
+					bone_log_array[strand_selection_i]=toString(bone_log_array[strand_selection_i])+","+j3;
+			print("j3と結合");
+
+				}else if(j4_compare_angle==Math.min(j1_compare_angle,Math.min(j2_compare_angle,Math.min(j3_compare_angle,Math.min(j4_compare_angle,Math.min(j5_compare_angle,j6_compare_angle)))))){
+					if(condition_flag[j4]==7 ||condition_flag[j4]==9){
+					condition_flag[j4]=8;
+					}else{
+					condition_flag[j4]=5;
+					}
+					end_x_array[strand_selection_i]=j4_x;
+					end_y_array[strand_selection_i]=j4_y;
+					max_x_array[strand_selection_i]=Math.max(max_x_array[strand_selection_i], j4_max_x);
+					min_x_array[strand_selection_i]=Math.min(min_x_array[strand_selection_i], j4_min_x);
+					max_y_array[strand_selection_i]=Math.max(max_y_array[strand_selection_i], j4_max_y);
+					min_y_array[strand_selection_i]=Math.min(min_y_array[strand_selection_i], j4_min_y);
+					length_array[strand_selection_i]=length_array[strand_selection_i]+j4_length;
+					if(condition_flag[j4]==5){
+						end_angle_array[strand_selection_i]=j4_replacement_angle;
+					}
+					bone_log_array[strand_selection_i]=toString(bone_log_array[strand_selection_i])+","+j4;
+			print("j4と結合");
+
+				}else if(j5_compare_angle==Math.min(j1_compare_angle,Math.min(j2_compare_angle,Math.min(j3_compare_angle,Math.min(j4_compare_angle,Math.min(j5_compare_angle,j6_compare_angle)))))){
+					if(condition_flag[j5]==7 ||condition_flag[j5]==9){
+					condition_flag[j5]=8;
+					}else{
+					condition_flag[j5]=5;
+					}
+					end_x_array[strand_selection_i]=j5_x;
+					end_y_array[strand_selection_i]=j5_y;
+					max_x_array[strand_selection_i]=Math.max(max_x_array[strand_selection_i], j5_max_x);
+					min_x_array[strand_selection_i]=Math.min(min_x_array[strand_selection_i], j5_min_x);
+					max_y_array[strand_selection_i]=Math.max(max_y_array[strand_selection_i], j5_max_y);
+					min_y_array[strand_selection_i]=Math.min(min_y_array[strand_selection_i], j5_min_y);
+					length_array[strand_selection_i]=length_array[strand_selection_i]+j5_length;
+					if(condition_flag[j5]==5){
+						end_angle_array[strand_selection_i]=j5_replacement_angle;
+					}
+					
+					bone_log_array[strand_selection_i]=toString(bone_log_array[strand_selection_i])+","+j5;
+			print("j5と結合");
+
+				}else if(j6_compare_angle==Math.min(j1_compare_angle,Math.min(j2_compare_angle,Math.min(j3_compare_angle,Math.min(j4_compare_angle,Math.min(j5_compare_angle,j6_compare_angle)))))){
+					if(condition_flag[j6]==7 ||condition_flag[j6]==9){
+					condition_flag[j6]=8;
+					}else{
+					condition_flag[j6]=5;
+					}
+					end_x_array[strand_selection_i]=j6_x;
+					end_y_array[strand_selection_i]=j6_y;
+					max_x_array[strand_selection_i]=Math.max(max_x_array[strand_selection_i], j6_max_x);
+					min_x_array[strand_selection_i]=Math.min(min_x_array[strand_selection_i], j6_min_x);
+					max_y_array[strand_selection_i]=Math.max(max_y_array[strand_selection_i], j6_max_y);
+					min_y_array[strand_selection_i]=Math.min(min_y_array[strand_selection_i], j6_min_y);
+					length_array[strand_selection_i]=length_array[strand_selection_i]+j6_length;
+					if(condition_flag[j6]==5){
+						end_angle_array[strand_selection_i]=j2_replacement_angle;
+					}
+					
+					bone_log_array[strand_selection_i]=toString(bone_log_array[strand_selection_i])+","+j6;
+			print("j6と結合");
+					
+				}
+
+			print("継続判定された試料番号");
+			print(strand_selection_i);
+			print("現在のx");
+			print(end_x_array[strand_selection_i]);
+
+			print("現在のy");
+			print(end_y_array[strand_selection_i]);
+
+			print("現在のlength");
+			print(length_array[strand_selection_i]);
+
+
+			}
+
+
+		}else{
+//condition_flagが0でないときの処理,つまり次に進む
+			bone_log_array[strand_selection_i]=bone_log;
+		strand_selection_i=strand_selection_i+1;
+		print("condition_flagが0でないため次のstrand_selection_iに進む");
+
+//condition_flagのk5を2にする
+			for(k=0;k<start_x_array.length;k++){
+	 			if(condition_flag[k]==5){
+					condition_flag[k]=2;
+				}
+			}
+			
+//condition_flagのk8を9にする
+				for(k=0;k<start_x_array.length;k++){
+			 		if(condition_flag[k]==8){
+					condition_flag[k]=9;
+					}
+				}	
+		}
+	}
+
+	}
+	print("1回目の各試料の結合終了");
+	
+	print("各試料の結合開始(2回目)");
+
+	
+	
+	print("2回目の各試料の結合処理");
+
+
+
+
+//Array.print(bone_log_array);
+//	Array.print(condition_flag);
+//	Array.print(start_x_array);
+//	Array.print(start_y_array);
+//	Array.print(end_x_array);
+//	Array.print(end_y_array);
+//	Array.print(length_array);
+//	Array.print(start_angle_array);
+//	Array.print(end_angle_array);
+//	Array.print(overlap_flag);
+
+
+
+
+
+//端部のデータを落とす
+print("端部のデータを落とす");
+	for(i=0;i<start_x_array.length;i++){
+		if((condition_flag[i]==3) && ((start_y_array[i] <= remove_edge_length) ||(start_x_array[i] <= remove_edge_length) || (start_x_array[i] >= (raw_image_width-remove_edge_length)) || (start_y_array[i] >= (raw_image_height-remove_edge_length)) ) ){
+		condition_flag[i]=4;
+		}
+		if((condition_flag[i]==3) && ((end_y_array[i] <= remove_edge_length) ||(end_x_array[i] <= remove_edge_length) || (end_x_array[i] >= (raw_image_width-remove_edge_length)) || (end_y_array[i] >= (raw_image_height-remove_edge_length)) ) ){
+		condition_flag[i]=4;
+		}
+
+	}
+	
+	
+//ノイズデータを落とす
+//6::3だったが、短いため（noise_detect_length以下のため）採用せず
+print("ノイズデータを落とす");
+
+	for(i=0;i<start_x_array.length;i++){
+		if((condition_flag[i]==3) &&  length_array[i] <= noise_detect_length){
+		condition_flag[i]=6;
+		}
+	}
+
+//　ストランドNoをつける
+	strand_no_array=Array.copy(overlap_flag);
+	
+//	remove_edge_length
+//	raw_image_height = getHeight();
+//	raw_image_width = getWidth();
+
+print("result_strandファイルへの書き出し");
+	File.append("Strand No,Bone No, Start X, Start Y, End X, End Y, Guide Start X, Guide Start Y,  Guide End X, Guide End Y, Max X, Max Y, Min X, Min Y,Start Angle, End Angle, Length,overlap,condition_flag,bone_log_array", raw_path+"image_after_processing\\"+file_name+"_result_strand_detail.csv") 
+	strand_no=0;
+	for(start_i=0;start_i<start_point_quantity;start_i++){
+		if(condition_flag[start_i]==3){
+		strand_no=strand_no+1;
+		strand_no_array[start_i]=strand_no;
+		}else{
+		strand_no_array[start_i]="none";		
+		}
+		File.append(strand_no_array[start_i]+","+start_i+","+start_x_array[start_i]+","+start_y_array[start_i]+","+end_x_array[start_i]+","+end_y_array[start_i]+","+Math.round(((start_x_array[start_i]+canvas_edge_space)/(image_width))*10)/10+","+Math.round(((start_y_array[start_i]+canvas_edge_space)/(image_height))*10)/10+","+Math.round(((end_x_array[start_i]+canvas_edge_space)/(image_width))*10)/10+","+Math.round(((end_y_array[start_i]+canvas_edge_space)/(image_height))*10)/10+","+max_x_array[start_i]+","+max_y_array[start_i]+","+min_x_array[start_i]+","+min_y_array[start_i]+","+start_angle_array[start_i]+","+end_angle_array[start_i]+","+length_array[start_i]+","+overlap_flag[start_i]+","+condition_flag[start_i]+","+bone_log_array[start_i] , raw_path+"image_after_processing\\"+file_name+"_result_strand_detail.csv") ;
+	}
+
+
+//resultファイルにタブをつける
+print("result_finalファイルへの書き出し");
+	File.append("Strand No, Start X, Start Y, End X, End Y,  Length", raw_path+"image_after_processing\\"+file_name+"_result_final_box.txt") 
+
+	for(start_i=0;start_i<start_point_quantity;start_i++){
+		if(condition_flag[start_i]==3){
+		File.append(strand_no_array[start_i]+","+start_x_array[start_i]+","+start_y_array[start_i]+","+end_x_array[start_i]+","+end_y_array[start_i]+","+length_array[start_i], raw_path+"image_after_processing\\"+file_name+"_result_final_box.txt") ;
+		}
+	}
+
+//ここから画像処理
+print("画像への書き込み開始");
+
+//courseのデータを読み込み
+	all_course_coordinate_file_data=File.openAsString(raw_path+"image_after_processing\\"+file_name+"_result_bone_course.txt") ;
+	all_course_coordinate_file_data=split(all_course_coordinate_file_data, "\n");
+//	Array.print(all_course_file_data);
+//	print(all_course_file_data[1]);
+
+//データの画像への書き込み
+
+print("cytoskeleton画像の書き込み開始");
+	run("RGB Color");
+		for(image_k=0;image_k<start_x_array.length;image_k++){
+		 	if(condition_flag[image_k]==3){
+			 	draw_string_confirm_image("Start"+strand_no_array[image_k]+"["+bone_log_array[image_k]+"]",start_x_array[image_k],start_y_array[image_k],strand_no_array[image_k]);
+			 	draw_string_confirm_image("End"+strand_no_array[image_k]+"("+length_array[image_k]+")",end_x_array[image_k],end_y_array[image_k]+font_size,strand_no_array[image_k]);
+//	 			print(bone_log_array[image_k]);
+	 			bone_course_no_array=split(bone_log_array[image_k], ",");
+//	 			Array.print(bone_course_no_array);
+//	 			print(bone_course_no_array[0]);
+	 			for(bone_i=0;bone_i<bone_course_no_array.length;bone_i++){
+	 				bone_no = bone_course_no_array[bone_i];
+	 				bone_course_x_array=split(all_course_coordinate_file_data[bone_no*2], ",");
+	 				bone_course_y_array=split(all_course_coordinate_file_data[bone_no*2+1], ",");
+
+	 				for(bone_coordinate=0;bone_coordinate<bone_course_x_array.length;bone_coordinate++){
+	 					draw_point_confirm_image(bone_course_x_array[bone_coordinate],bone_course_y_array[bone_coordinate],strand_no_array[image_k]);
+	 				}
+	 				
+	 			}
+		 	}
+		}
+		
+		//この後、各boneの横に長さとかいれる
+		
+		for(bone_k=0;bone_k<bone_length_array.length;bone_k++){
+			if(bone_overlap_flag[bone_k]==0){
+				 	bone_course_x_array=split(all_course_coordinate_file_data[bone_k*2], ",");
+	 				bone_course_y_array=split(all_course_coordinate_file_data[bone_k*2+1], ",");
+	
+	 				bone_course_x_center=bone_course_x_array[floor(bone_course_x_array.length/2)];
+	 				bone_course_y_center=bone_course_y_array[floor(bone_course_y_array.length/2)];
+	 				draw_bone_name_confirm_image("Bone"+bone_k+"("+bone_length_array[bone_k]+")",bone_course_x_center,bone_course_y_center);
+
+			
+			}
+		}
+		
+
+//画像の保存
+	saveAs("BMP", raw_path+"image_after_processing\\"+file_name+"_after_processing");
+	close();
+
+	if(strand_output==1){
+print("original画像(各Strand毎)への書き込み開始");
+
+	File.makeDirectory(raw_path+"image_after_processing\\"+file_name+"_strand_image");
+
+	open(raw_path+"original/"+raw_file_list[file_open_i]);
+	for(image_cut_k=0;image_cut_k<start_x_array.length;image_cut_k++){
+
+		if(condition_flag[image_cut_k]==3){
+		print("Strand No."+image_cut_k);
+		open(raw_path+"original/"+raw_file_list[file_open_i]);
+		
+		rectangle_x=Math.max(min_x_array[image_cut_k]-strand_image_margin,0);
+		rectangle_y=Math.max(min_y_array[image_cut_k]-strand_image_margin,0);
+	 	makeRectangle(rectangle_x, rectangle_y, max_x_array[image_cut_k]-min_x_array[image_cut_k]+2*strand_image_margin, max_y_array[image_cut_k]-min_y_array[image_cut_k]+2*strand_image_margin);
+	 	run("Duplicate...", " ");
+
+	 	print("各Strand毎の画像のCanvasサイズ変更");
+		raw_strand_image_height = getHeight();
+		raw_strand_image_width = getWidth();
+		strand_image_height=raw_strand_image_height+canvas_edge_space*2;
+		strand_image_width=raw_strand_image_width+canvas_edge_space*2;
+		run("Canvas Size...", "width=strand_image_width height=strand_image_height position=Center zero");			
+	 	
+	 	draw_string_confirm_image("Start"+strand_no_array[image_cut_k]+"["+bone_log_array[image_cut_k]+"]",start_x_array[image_cut_k]-rectangle_x,start_y_array[image_cut_k]-rectangle_y,strand_no_array[image_cut_k]);
+	 	draw_string_confirm_image("End"+strand_no_array[image_cut_k]+"("+length_array[image_cut_k]+")",end_x_array[image_cut_k]-rectangle_x,end_y_array[image_cut_k]+font_size-rectangle_y,strand_no_array[image_cut_k]);
+
+		bone_course_no_array=split(bone_log_array[image_cut_k], ",");
+	 	for(bone_i=0;bone_i<bone_course_no_array.length;bone_i++){
+	 		bone_no = bone_course_no_array[bone_i];
+			bone_course_x_array=split(all_course_coordinate_file_data[bone_no*2], ",");
+			bone_course_y_array=split(all_course_coordinate_file_data[bone_no*2+1], ",");
+			for(bone_coordinate=0;bone_coordinate<bone_course_x_array.length;bone_coordinate++){
+				draw_line_coordinate_x=parseInt(bone_course_x_array[bone_coordinate])-rectangle_x;
+				draw_line_coordinate_y=parseInt(bone_course_y_array[bone_coordinate])-rectangle_y;
+				draw_line_confirm_image(draw_line_coordinate_x,draw_line_coordinate_y,strand_no_array[image_cut_k]);
+ 			}
+ 			bone_course_x_center=bone_course_x_array[floor(bone_course_x_array.length/2)];
+	 		bone_course_y_center=bone_course_y_array[floor(bone_course_y_array.length/2)];
+ 			draw_bone_name_confirm_image("Bone"+bone_no+"("+bone_length_array[bone_no]+")",bone_course_x_center-rectangle_x,bone_course_y_center-rectangle_y);
+ 		}
+	 	
+ 		//最後に左上に画像データ、説明等をいれる
+ 		drawString("Strand"+strand_no_array[image_cut_k], canvas_edge_space+font_size, canvas_edge_space+font_size*2);
+ 		drawString("Length"+length_array[image_cut_k], canvas_edge_space+font_size, canvas_edge_space+font_size*3);
+		drawString("Correction Start x,y=("+start_x_array[image_cut_k]+canvas_edge_space+","+start_y_array[image_cut_k]+canvas_edge_space+")", canvas_edge_space+font_size, canvas_edge_space+font_size*4);
+		drawString("Guide Start x,y=("+Math.round(((start_x_array[image_cut_k]+canvas_edge_space)/(image_width))*10)/10+","+Math.round(((start_y_array[image_cut_k]+canvas_edge_space)/(image_height))*10)/10+")", canvas_edge_space+font_size, canvas_edge_space+font_size*5);
+
+ 		
+	 	saveAs("Jpeg", raw_path+"image_after_processing\\"+file_name+"_strand_image\\"+file_name+"_Strand_No_"+strand_no_array[image_cut_k]+".jpg");	 	
+	 	close();
+	 	call("java.lang.System.gc"); // run garbage collector
+	 	}
+	}
+	}
+	
+print("original画像(全体)への書き込み開始");
+//original画像への保存	
+	open(raw_path+"original/"+raw_file_list[file_open_i]);
+	run("Canvas Size...", "width=image_width height=image_height position=Center zero");
+	run("RGB Color");
+
+		for(image_k=0;image_k<start_x_array.length;image_k++){
+		 	if(condition_flag[image_k]==3){
+			 	draw_string_confirm_image("Start"+strand_no_array[image_k]+"["+bone_log_array[image_k]+"]",start_x_array[image_k],start_y_array[image_k],strand_no_array[image_k]);
+			 	draw_string_confirm_image("End"+strand_no_array[image_k]+"("+length_array[image_k]+")",end_x_array[image_k],end_y_array[image_k]+font_size,strand_no_array[image_k]);
+//	 			print(bone_log_array[image_k]);
+	 			bone_course_no_array=split(bone_log_array[image_k], ",");
+//	 			Array.print(bone_course_no_array);
+//	 			print(bone_course_no_array[0]);
+	 			for(bone_i=0;bone_i<bone_course_no_array.length;bone_i++){
+	 				bone_no = bone_course_no_array[bone_i];
+	 				bone_course_x_array=split(all_course_coordinate_file_data[bone_no*2], ",");
+	 				bone_course_y_array=split(all_course_coordinate_file_data[bone_no*2+1], ",");
+
+	 				for(bone_coordinate=0;bone_coordinate<bone_course_x_array.length;bone_coordinate++){
+	 					draw_point_confirm_image(bone_course_x_array[bone_coordinate],bone_course_y_array[bone_coordinate],strand_no_array[image_k]);
+	 				}
+	 			}
+		 	}
+		}
+
+		
+		//この後、各boneの横に長さとかいれる
+		
+		for(bone_k=0;bone_k<bone_length_array.length;bone_k++){
+			if(bone_overlap_flag[bone_k]==0){
+				 	bone_course_x_array=split(all_course_coordinate_file_data[bone_k*2], ",");
+	 				bone_course_y_array=split(all_course_coordinate_file_data[bone_k*2+1], ",");
+	
+	 				bone_course_x_center=bone_course_x_array[floor(bone_course_x_array.length/2)];
+	 				bone_course_y_center=bone_course_y_array[floor(bone_course_y_array.length/2)];
+	 				draw_bone_name_confirm_image("Bone"+bone_k+"("+bone_length_array[bone_k]+")",bone_course_x_center,bone_course_y_center);
+			}
+		}
+		
+	//画像の保存
+	saveAs("BMP", raw_path+"image_after_processing\\"+file_name+"_original_after_processing");
+	close();
+	
+	print("終了");
+
+
+}
